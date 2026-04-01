@@ -6,8 +6,6 @@ A framework for training open-loop, response-agnostic multi-turn jailbreak attac
 
 **Paper**: https://arxiv.org/abs/2602.06854 (ICLR 2026)
 
-:warning: Please check the first author's [repository](https://github.com/fmmarkmq/SEMA.git) for the latest updates of SEMA.
-
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
