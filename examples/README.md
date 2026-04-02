@@ -13,13 +13,13 @@ Pre-built training scripts for different attacker/victim configurations. All scr
 **Usage:**
 
 ```bash
-# Llama-3.1-8B on 4 H100s
+# Llama-3.1-8B-Instruct on 4 H100s
 bash scripts/prefill_selftuning_llama8b_4x80gb-gpu.sh
 
-# Qwen2.5-14B on 8 H100s
+# Qwen2.5-14B-Instruct on 8 H100s
 bash scripts/prefill_selftuning_qwen14b_8x80gb-gpu.sh
 
-# Qwen2.5-3B on 4 A6000s
+# Qwen2.5-3B-Instruct on 4 A6000s
 bash scripts/prefill_selftuning_qwen3b_4x48gb-gpu.sh
 ```
 
@@ -38,13 +38,13 @@ bash scripts/prefill_selftuning_qwen3b_4x48gb-gpu.sh
 **Usage:**
 
 ```bash
-# Llama-8B attacker vs Llama-8B victim
+# Llama-8B-Instruct attacker vs Llama-8B victim
 bash scripts/rl_ida_llama8b@llama8b_8x80gb-gpu.sh
 
-# Qwen-14B attacker vs Llama-8B victim
+# Qwen-14B-Instruct attacker vs Llama-8B victim
 bash scripts/rl_ida_qwen14b@llama8_8x80gb-gpu.sh
 
-# Qwen-3B attacker vs Llama-8B victim
+# Qwen-3B-Instruct attacker vs Llama-8B victim
 bash scripts/rl_ida_qwen3b@llama8b_8x80gb-gpu.sh
 ```
 
