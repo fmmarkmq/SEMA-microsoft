@@ -11,6 +11,15 @@ SEMA is a framework for training open-loop, response-agnostic multi-turn jailbre
 
 ## Installation
 
+### Docker (recommended)
+
+```bash
+docker pull allenlao/sema:v0.1
+docker run --gpus all --name sema -it allenlao/sema:v0.1
+```
+
+### From source
+
 ```bash
 conda create -n sema python=3.11.13 -y
 conda activate sema
