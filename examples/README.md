@@ -38,13 +38,13 @@ bash scripts/prefill_selftuning_qwen3b_4x48gb-gpu.sh
 **Usage:**
 
 ```bash
-# Llama-8B-Instruct attacker vs Llama-8B victim
+# Llama-8B attacker vs Llama-3.1-8B-Instruct victim
 bash scripts/rl_ida_llama8b@llama8b_8x80gb-gpu.sh
 
-# Qwen-14B-Instruct attacker vs Llama-8B victim
+# Qwen-14B attacker vs Llama-3.1-8B-Instruct victim
 bash scripts/rl_ida_qwen14b@llama8_8x80gb-gpu.sh
 
-# Qwen-3B-Instruct attacker vs Llama-8B victim
+# Qwen-3B attacker vs Llama-3.1-8B-Instruct victim
 bash scripts/rl_ida_qwen3b@llama8b_8x80gb-gpu.sh
 ```
 
