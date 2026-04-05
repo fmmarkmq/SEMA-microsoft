@@ -65,10 +65,8 @@ import os
 import json
 from dataclasses import dataclass, field
 import torch
-import numpy as np
 from accelerate import logging
 import datasets
-from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from trl import (
@@ -85,9 +83,6 @@ from trl.trainer.utils import SIMPLE_CHAT_TEMPLATE
 
 
 logger = logging.get_logger(__name__)
-
-# Enable logging in a Hugging Face Space
-os.environ.setdefault("TRACKIO_SPACE_ID", "trl-trackio")
 
 
 @dataclass
@@ -165,11 +160,6 @@ def main(script_args, training_args, model_args):
 
     dataset = datasets.Dataset.from_list(dpo_data)
     dataset = dataset.train_test_split(test_size=0.1, seed=42)
-
-    # # Load the dataset
-    # dataset = load_dataset(
-    #     script_args.dataset_name, name=script_args.dataset_config, streaming=script_args.dataset_streaming
-    # )    
 
     # Initialize the DPO trainer
     trainer = DPOTrainer(

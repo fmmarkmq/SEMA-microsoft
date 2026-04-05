@@ -46,12 +46,9 @@ accelerate launch \
     --seed 42
 """
 import os
-import copy
-import re
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, Mxfp4Config
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from dataclasses import dataclass, field
-from trl import ModelConfig, ScriptArguments, SFTConfig, SFTTrainer, TrlParser, get_peft_config
 from trl import (
     ModelConfig,
     ScriptArguments,
@@ -84,30 +81,17 @@ def main(script_args, training_args, model_args):
     model = AutoModelForCausalLM.from_pretrained(model_args.model_name_or_path, **model_kwargs)
 
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
-
-
     dataset = load_dataset(
         script_args.dataset_name,
         data_files=script_args.data_path,
         split="train",
         num_proc=16,
     )
-    
-    # def make_messages(example):
-    #     messages = copy.deepcopy(example['input_prompt'])
-    #     messages.append({"role": "assistant", "content": example['output_text']})
-    #     return {"messages": messages}
-
-    # dataset = dataset.map(make_messages)
-
-    
-    
 
     def make_prompt_completion(example):
         prompt_tokens = tokenizer.apply_chat_template(example['input_prompt'], add_generation_prompt=True)
         prompt = tokenizer.decode(prompt_tokens)
         completion = example['output_text']  
-        # completion = re.sub(r'\n\n\(?(?:Note:)[^\n]*\)?(?=\n|$)', '', completion)
         return {"prompt": prompt, "completion": completion}
     
     dataset = dataset.map(make_prompt_completion)
@@ -134,7 +118,7 @@ def main(script_args, training_args, model_args):
 
 
 if __name__ == "__main__":
-    os.environ["WANDB_PROJECT"] = "AttackTraining"
+    os.environ["WANDB_PROJECT"] = "SEMA"
     parser = TrlParser((ScriptArguments_, SFTConfig, ModelConfig))
     script_args, training_args, model_args, _ = parser.parse_args_and_config(return_remaining_strings=True)
     main(script_args, training_args, model_args)
