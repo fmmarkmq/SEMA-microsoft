@@ -1,3 +1,4 @@
+# Copyright (c) Microsoft Corporation.
 # Copyright 2020-2025 The HuggingFace Team
 # Modifications Copyright (c) 2025 Your Name
 #

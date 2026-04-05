@@ -1,4 +1,5 @@
-
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license. All rights reserved.
 import os
 import asyncio
 import re
