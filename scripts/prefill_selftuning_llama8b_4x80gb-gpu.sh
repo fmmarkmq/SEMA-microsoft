@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-python sema/prefilling_rollout.py \
+python -m sema.cli.train_cli rollout \
     --seed 42 \
     --model_name_or_path meta-llama/Llama-3.1-8B-Instruct \
     --temperature 1.0 \
@@ -20,7 +20,7 @@ python sema/prefilling_rollout.py \
 
 accelerate launch --num_processes 4 \
     --config_file scripts/deepspeed_configs/deepspeed_zero3.yaml \
-    sema/self_tuning.py \
+    sema/cli/train_cli.py self_tuning \
     --torch_dtype bfloat16 \
     --model_name_or_path meta-llama/Llama-3.1-8B-Instruct \
     --output_dir files/checkpoints/prefilling_self-tuned-Llama-3.1-8B-Instruct \

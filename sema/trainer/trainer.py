@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright 2020-2025 The HuggingFace Team (Apache License 2.0)
 
 import os
+import re
 import asyncio
 import json
 from datetime import datetime
@@ -12,17 +14,27 @@ import torch.distributed as dist
 import datasets
 from dataclasses import dataclass, field
 from jinja2 import Template
+from vllm import LLM, SamplingParams
 
-from trl import GRPOConfig, GRPOTrainer, ModelConfig, TrlParser
-from trl import get_kbit_device_map, get_peft_config, get_quantization_config
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import (
+    GRPOConfig, GRPOTrainer, ModelConfig, ScriptArguments,
+    SFTConfig, SFTTrainer, TrlParser,
+    get_kbit_device_map, get_peft_config, get_quantization_config,
+)
 
-from victims.victims import VLLMVictimWrapper
-from rewards.format_reward import NumberedListFormatReward
-from rewards.intent_drift_aware_reward import IntentDriftAwareReward
-from rewards.ablations.no_intent_alignment_reward import NoIntendAlignmentReward
-from rewards.ablations.no_refusal_reward import NoRefusalPhraseReward
-from utils import setup_seed
+from sema.utils import setup_seed
+from sema.victims.victims import VLLMVictimWrapper
+from sema.rewards.format_reward import NumberedListFormatReward
+from sema.rewards.intent_drift_aware_reward import IntentDriftAwareReward
+from sema.rewards.ablations.no_intent_alignment_reward import NoIntendAlignmentReward
+from sema.rewards.ablations.no_refusal_reward import NoRefusalPhraseReward
 
+
+# ============================================================
+# Shared dataclasses
+# ============================================================
 
 @dataclass
 class DataConfig:
@@ -77,6 +89,170 @@ class RewardConfig:
         metadata={"help": "The directory to save the reward logs."}
     )
 
+@dataclass
+class SelfTuningScriptArguments(ScriptArguments):
+    data_path: str = field(default=None)
+
+
+# ============================================================
+# Prefilling rollout
+# ============================================================
+
+def parse_adv_prompt(output_text, max_turns=7):
+    try:
+        adv_prompt_mt = re.findall(r'(\d+\.)\s*(.*?)(?=\n\d+\.|$)', '1. '+output_text, re.DOTALL)
+        numbers = [int(item[0][:-1]) for item in adv_prompt_mt]
+        adv_prompt = [item[1].strip() for item in adv_prompt_mt]
+        adv_prompt = adv_prompt[:max_turns]
+    except Exception as e:
+        print(f"Error processing completion: {e}")
+        adv_prompt = []
+    return adv_prompt
+
+
+def run_rollout(args):
+    model_name_or_path = args.model_name_or_path
+    output_dir = args.output_dir
+    output_file = args.output_file
+    dataset_name = args.dataset_name
+    data_split_seed = args.data_split_seed
+    test_size = args.test_size
+    system_prompt_path = args.system_prompt_path
+    query_prompt_path = args.query_prompt_path
+    batch_size = args.batch_size
+    max_turns = args.max_turns
+    n_generations = args.n_generations
+    temperature = args.temperature
+    max_tokens = args.max_tokens
+
+    if dataset_name == "advbench":
+        advbench_path = "data/advbench.csv"
+        if not os.path.exists(advbench_path):
+            os.makedirs("data", exist_ok=True)
+            from urllib.request import urlretrieve
+            url = "https://raw.githubusercontent.com/llm-attacks/llm-attacks/a62d1307e38b3a076e614b20781c785fd860d813/data/advbench/harmful_behaviors.csv"
+            urlretrieve(url, advbench_path)
+        advbench_df = pd.read_csv(advbench_path)
+        advbench_df = advbench_df.rename(columns={"goal": "request"})
+        advbench_data = advbench_df.to_dict(orient="records")
+        dataset = datasets.Dataset.from_list(advbench_data)
+    else:
+        raise ValueError(f"Not supported dataset name: {dataset_name}")
+
+    dataset = dataset.train_test_split(test_size=test_size, seed=data_split_seed)
+
+    with open(system_prompt_path, "r") as f:
+        SYSTEM_PROMPT_TEMPLATE = Template(f.read())
+
+    with open(query_prompt_path, "r") as f:
+        QUERY_PROMPT_TEMPLATE = Template(f.read())
+
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.render(max_turns=max_turns)
+    def make_prefilling_prompt(example):
+        query_prompt = QUERY_PROMPT_TEMPLATE.render(request=example['request'])
+        prefilling_prompt = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query_prompt},
+            {"role": "assistant", "content": "1. "},
+        ]
+        return {"prompt": prefilling_prompt}
+
+    dataset = dataset.map(make_prefilling_prompt)
+    train_dataset = dataset["train"]
+
+    model = LLM(model=model_name_or_path, gpu_memory_utilization=0.8)
+    sampling_params = SamplingParams(temperature=temperature, n=n_generations, max_tokens=max_tokens)
+    prefilled_rollouts = []
+    for i in range(0, len(train_dataset), batch_size):
+        batch_samples = train_dataset[i:i+batch_size]
+        batch_requests = batch_samples['request']
+        batch_prompts = batch_samples['prompt']
+        outputs = model.chat(
+            batch_prompts, 
+            add_generation_prompt=False, 
+            continue_final_message=True, 
+            sampling_params=sampling_params
+            )
+
+        for j, output in enumerate(outputs):
+            request = batch_requests[j]
+            prompt = batch_prompts[j]
+            for k, o in enumerate(output.outputs):
+                output_text = o.text
+
+                adv_prompt = parse_adv_prompt(output_text)
+
+                sample = {
+                    "dataset_name": "advbench",
+                    "sample_id": i + j,
+                    "request": request,
+                    "attacker": model_name_or_path,
+                    "adv_prompt": adv_prompt,
+                    "attempt_id": k,
+                    "input_prompt": prompt,
+                    "output_text": output_text,
+                }
+                
+                prefilled_rollouts.append(sample)
+    
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, output_file), "w") as f:
+        json.dump(prefilled_rollouts, f, indent=4, ensure_ascii=False)
+
+
+# ============================================================
+# Self-tuning (SFT)
+# ============================================================
+
+def run_self_tuning(script_args, training_args, model_args):
+    quantization_config = get_quantization_config(model_args)
+    model_kwargs = dict(
+        revision=model_args.model_revision,
+        trust_remote_code=model_args.trust_remote_code,
+        attn_implementation=model_args.attn_implementation,
+        torch_dtype=model_args.torch_dtype,
+        device_map=get_kbit_device_map() if quantization_config is not None else None,
+        quantization_config=quantization_config,
+    )
+
+    model = AutoModelForCausalLM.from_pretrained(model_args.model_name_or_path, **model_kwargs)
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+
+    dataset = load_dataset(
+        script_args.dataset_name,
+        data_files=script_args.data_path,
+        split="train",
+        num_proc=16,
+    )
+
+    def make_prompt_completion(example):
+        prompt_tokens = tokenizer.apply_chat_template(example['input_prompt'][:-1], add_generation_prompt=True)
+        prompt = tokenizer.decode(prompt_tokens)
+        completion = '1.'+ example['output_text']  
+        completion = re.sub(r'\n\n\(?(?:Note:)[^\n]*\)?(?=\n|$)', '', completion)
+        return {"prompt": prompt, "completion": completion}
+
+    dataset = dataset.map(make_prompt_completion)
+    dataset = dataset.train_test_split(test_size=0.1, seed=42)
+
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset[script_args.dataset_train_split],
+        eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
+        processing_class=tokenizer,
+        peft_config=get_peft_config(model_args),
+    )
+    trainer.train()
+
+    trainer.save_model(training_args.output_dir)
+    if training_args.push_to_hub:
+        trainer.push_to_hub(model_name=training_args.output_dir.split("/")[-1])
+
+
+# ============================================================
+# RL-GRPO
+# ============================================================
 
 class SimulationRewardPipeline:
     def __init__(
@@ -103,7 +279,6 @@ class SimulationRewardPipeline:
         
         self.logs = []
 
-
     def setup_score_reward(self, score_reward_name, score_reward_model_name):
         if score_reward_name == "ida_reward":
             score_reward = IntentDriftAwareReward(
@@ -125,14 +300,12 @@ class SimulationRewardPipeline:
             raise ValueError(f"Invalid score reward name: {score_reward_name}")
         return score_reward
 
-
     def save_logs(self):
         os.makedirs(self.save_dir, exist_ok=True)
         filename = f"reward_logs_rank{self.rank}.json"
         filepath = os.path.join(self.save_dir, filename)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(self.logs, f, ensure_ascii=False, indent=2)
-
 
     def reward(self, completions, **kwargs):
         self.global_step += 1
@@ -184,8 +357,7 @@ class SimulationRewardPipeline:
         return rewards
 
 
-def main(data_args, training_args, model_args, reward_args):
-    # ------------Load model & tokenizer------------
+def run_rl_grpo(data_args, training_args, model_args, reward_args):
     torch_dtype = (
         model_args.torch_dtype if model_args.torch_dtype in ["auto", None] else getattr(torch, model_args.torch_dtype)
     )
@@ -198,13 +370,11 @@ def main(data_args, training_args, model_args, reward_args):
         quantization_config=quantization_config,
     )
 
-    # ------------Load & preprocess dataset------------
     if data_args.dataset_name == "advbench":
         advbench_path = "data/advbench.csv"
         if not os.path.exists(advbench_path):
             os.makedirs("data", exist_ok=True)
             from urllib.request import urlretrieve
-            # we use a specific commit to ensure the data is consistent and won't change over time
             url = "https://raw.githubusercontent.com/llm-attacks/llm-attacks/a62d1307e38b3a076e614b20781c785fd860d813/data/advbench/harmful_behaviors.csv"
             urlretrieve(url, advbench_path)
         advbench_df = pd.read_csv(advbench_path)
@@ -239,9 +409,6 @@ def main(data_args, training_args, model_args, reward_args):
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"] if training_args.eval_strategy != "no" else None
 
-
-
-    # ------------Setup Simulation-grounded reward------------
     victim = VLLMVictimWrapper(
         model_path=reward_args.victim_model_name_or_path,
         gpu_memory_utilization=reward_args.gpu_memory_utilization,
@@ -258,8 +425,6 @@ def main(data_args, training_args, model_args, reward_args):
         save_dir=reward_args.reward_log_save_dir,
     )
 
-
-    # ------------Train model via GRPO------------
     trainer = GRPOTrainer(
         model=model_args.model_name_or_path,
         args=training_args,
@@ -271,18 +436,6 @@ def main(data_args, training_args, model_args, reward_args):
 
     trainer.train()
 
-
-    # ------------Save model------------
     trainer.save_model(training_args.output_dir)
     if training_args.push_to_hub:
         trainer.push_to_hub(model_name=training_args.output_dir.split("/")[-1])
-
-
-if __name__ == "__main__":
-    os.environ["WANDB_PROJECT"] = "SEMA"
-    parser = TrlParser((DataConfig, GRPOConfig, ModelConfig, RewardConfig))
-    data_args, training_args, model_args, reward_args = parser.parse_args_and_config()
-
-    setup_seed(training_args.seed)
-    main(data_args, training_args, model_args, reward_args)
-
