@@ -11,7 +11,7 @@ sleep 60
 
 accelerate launch --num_processes 7 \
     --config_file scripts/deepspeed_configs/deepspeed_zero3.yaml \
-    sema/rl_grpo.py \
+    sema/cli/train_cli.py rl_grpo \
     --seed 42 \
     --data_seed 42 \
     --model_name_or_path files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct \

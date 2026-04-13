@@ -1,4 +1,5 @@
-
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license. All rights reserved.
 import os
 import asyncio
 import re
@@ -7,11 +8,9 @@ import json
 import argparse
 import numpy as np
 import pandas as pd
-import torch
 import datasets
-from datasets import load_dataset
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List
 import ray
 
 from vllm import LLM, SamplingParams
@@ -26,7 +25,6 @@ def rollout(model_name_or_path, dataset, batch_size, start_sample_id=0):
     model = LLM(
         model=model_name_or_path,
         gpu_memory_utilization=0.8,
-        # distributed_executor_backend="external_launcher",
     )
     sampling_params = SamplingParams(temperature=1.0, n=10, max_tokens=500)
 
@@ -37,9 +35,6 @@ def rollout(model_name_or_path, dataset, batch_size, start_sample_id=0):
         batch_prompts = batch_samples['prompt']
         outputs = model.chat(batch_prompts, sampling_params=sampling_params)
 
-        # request = dataset["train"][i]["request"]
-        # prompt = dataset["train"][i]["prompt"]
-        # outputs = model.chat(prompt, add_generation_prompt=False, continue_final_message=True, sampling_params=sampling_params)
         for j, output in enumerate(outputs):
             request = batch_requests[j]
             prompt = batch_prompts[j]
@@ -108,8 +103,6 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     
-    # model_name_or_path = "meta-llama/Llama-3.2-3B-Instruct"
-    # model_name_or_path = "meta-llama/Llama-3.1-8B-Instruct"
     model_name_or_path = args.model_name_or_path
     victim_model_name_or_path = args.victim_model_name_or_path
     output_dir = args.output_dir
@@ -119,7 +112,7 @@ if __name__ == "__main__":
     seed = args.seed
     
     setup_seed(seed)
-    os.environ["WANDB_PROJECT"] = "AttackTraining"
+    os.environ["WANDB_PROJECT"] = "SEMA"
 
 
     advbench_df = pd.read_csv("data/advbench.csv")
@@ -129,7 +122,6 @@ if __name__ == "__main__":
     
     dataset = datasets.Dataset.from_list(advbench_data)
     dataset = dataset.train_test_split(test_size=0.2, seed=42)
-    import pdb; pdb.set_trace()
 
 
     _PROMPT_TEMPLATE = (
@@ -164,8 +156,6 @@ if __name__ == "__main__":
 
     dataset = dataset.map(make_conversation)
 
-    # # select first 10 samples but remain the same data type
-    # dataset['train'] = dataset['train'].select(range(12))
     sample_idxs_ranks = np.array_split(np.arange(len(dataset['train'])), world_size)
 
     dataset_ranks = []
@@ -173,9 +163,7 @@ if __name__ == "__main__":
         dataset_copy = copy.deepcopy(dataset)
         dataset_copy['train'] = dataset_copy['train'].select(sample_idxs_ranks[rank])
         dataset_ranks.append(dataset_copy)
-    
 
-    # results = ray.get(rollout.remote(model_name_or_path, dataset, batch_size))
     results = ray.get([
         rollout.remote(
             model_name_or_path, 
@@ -189,8 +177,6 @@ if __name__ == "__main__":
     results = ray.get([execute_and_evaluate.remote(victim_model_name_or_path, results[rank]) for rank in range(world_size)])
     results = [result for sublist in results for result in sublist]
 
-    # save results to json
-    # with open("files/prefill_rollout/advbench - asdw_llama3_3b_original_adv_prompt.json", "w") as f:
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, output_file), "w") as f:
         json.dump(results, f, indent=4, ensure_ascii=False)

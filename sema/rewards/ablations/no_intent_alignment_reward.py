@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license. All rights reserved.
+
 import json
 import traceback
 import logging
