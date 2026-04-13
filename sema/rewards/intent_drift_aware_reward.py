@@ -65,6 +65,11 @@ class IntentDriftAwareReward:
             assert 'detail_level_score' in output_dict, "detail_level_score is required in output"
             assert 'rationale' in output_dict, "rationale is required in output"
             output_dict['output_text'] = response_text
+
+            output_dict['intent_alignment_score'] = float(output_dict['intent_alignment_score'])/10.0
+            output_dict['compliance_risk_score'] = float(output_dict['compliance_risk_score'])/10.0
+            output_dict['detail_level_score'] = float(output_dict['detail_level_score'])/10.0
+
             return output_dict
 
         except Exception as e:
@@ -73,11 +78,11 @@ class IntentDriftAwareReward:
             LOGGER.error(e)
 
             output_dict = {
-                "intent_alignment_score": None,
-                "compliance_risk_score": None,
-                "detail_level_score": None,
+                "intent_alignment_score": 0.0,
+                "compliance_risk_score": 0.0,
+                "detail_level_score": 0.0,
                 "rationale": None,
-                "output_text": None,
+                "output_text": 'Error processing input: ' + str(e),
             }
             return output_dict
 
