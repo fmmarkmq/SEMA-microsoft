@@ -333,7 +333,8 @@ class SimulationRewardPipeline:
         ))
         score_reward_values = [output['reward'] for output in score_reward_outputs]
 
-        rewards = np.array(format_reward_values) + np.array(score_reward_values)
+        # normalize rewards to 0 ~ 1
+        rewards = 0.5 * np.array(format_reward_values) + 0.5 * np.array(score_reward_values)
         rewards = rewards.tolist()
 
         self.logs.append({
