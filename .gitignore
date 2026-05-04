@@ -12,6 +12,7 @@ __pycache__
 wandb/
 .prompt_history/
 .litellm_cache/
+.github/
 
 files/
 cache/
