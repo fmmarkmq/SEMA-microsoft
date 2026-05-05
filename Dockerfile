@@ -46,6 +46,10 @@ RUN pip install --no-cache-dir \
     pytest==9.0.3 \
     pytest-asyncio==1.3.0
 
+# peft is imported transitively via trl.get_peft_config in sema/trainer/trainer.py
+# but is missing from the allenlao/sema:v0.1 base image.
+RUN pip install --no-cache-dir peft==0.19.1
+
 # Writable cache dirs for triton / torchinductor / vLLM / HF when running as non-root sandbox user
 ENV TRITON_CACHE_DIR=/workspace/.cache/triton \
     TORCHINDUCTOR_CACHE_DIR=/workspace/.cache/torchinductor \

@@ -20,3 +20,4 @@ reward_logs/
 sema/toys/
 data/advbench.csv
 data/jailbreak_toy.json
+.cache/
