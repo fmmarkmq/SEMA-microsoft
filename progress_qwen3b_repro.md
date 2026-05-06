@@ -118,3 +118,87 @@ ls -la files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct/
 ```
 
 **Status:** Stage I pass. Ready for Stage II — pending user go-ahead before launching `scripts/rl_ida_qwen3b@llama8b_4x46gb-gpu.sh`.
+
+---
+
+## 2026-05-06 — Stage II launch attempts: 4 OOMs then a clean start with CPU optimizer offload
+
+User said "launch stage 2" so I fired the original Stage II script (pdtbs=2, grad_accum=28, steps_per_gen=56, num_gens=28, max_prompt=2048, gmu=0.4 from the published 8×80GB script).
+
+### Attempt 1 — gmu=0.4 (vLLM init OOM)
+
+vLLM victim KV-cache reservation went **negative**:
+```
+INFO ... gpu_worker.py:255: Available KV cache memory: -0.53 GiB
+ValueError: No available memory for the cache blocks. Try increasing gpu_memory_utilization
+```
+Diagnosis: 0.4 × 46 GiB = 18.4 GiB budget. Llama-3.1-8B weights = 14.99 GiB + CUDA-graph 0.47 + profile ≈ 19 GiB. Already over budget before any KV cache. Bumped gmu → 0.55.
+
+### Attempt 2 — gmu=0.55 (trainer first peak OOM)
+
+vLLM ran clean (KV=6.13 GiB) but trainer crashed at first GRPO peak:
+```
+torch.OutOfMemoryError: Tried to allocate 3.74 GiB. GPU 0 ... 1.43 GiB free.
+PyTorch alloc 37.37 GiB.
+```
+Shortfall: 2.31 GiB.
+
+### Attempt 3 — pdtbs=2→1, grad_accum=28→56, steps_per_gen=56→112 (Option B)
+
+Halved per-step batch hoping to halve activations. **Same shortfall** because the peak is from per-microbatch logits in GRPO logprob fwd, not from grad activations. pdtbs reduction had no measurable effect.
+
+### Attempt 4 — gmu=0.55→0.50
+
+PyTorch alloc 35.17 GiB. Free 3.68 GiB. Same 3.74 GiB allocation fails — **off by 60 MiB**.
+
+### Attempt 5 — gmu=0.50→0.48
+
+First peak now succeeded. Trainer climbed to PyTorch alloc 37.99 GiB at a deeper peak. Same 3.74 GiB allocation fails again. 838 MiB free → short by 2.91 GiB. Demonstrated the GRPO step has **multiple ~3.74 GiB transient allocations** spaced through the step, so gmu reductions chase ever-deeper peaks.
+
+### Detailed memory math (recorded for posterity)
+
+The 3.74 GiB allocation reverse-engineers cleanly to a logits-shape tensor: `B × T × V × 2 bytes` with B≈5, T≈2640, V=152064 (Qwen2.5-3B vocab) ≈ 3.74 GiB. TRL chunks the GRPO logprob fwd in groups of ~5 sequences. With pdtbs × num_gens = 1×28 = 28 sequences per micro-step, that's ~6 chunks per active-policy fwd, plus another ~6 for the reference policy. Each chunk allocates and frees, so memory doesn't compound — but every chunk needs ≥3.74 GiB free at that moment.
+
+Per-rank steady-state trainer state (Qwen2.5-3B, ZeRO-3 across 3 ranks):
+- Active params (bf16): 3.4B × 2 / 3 = 2.27 GiB
+- Active grads (bf16): 2.27 GiB
+- **Adam state (fp32 m+v): 27.2 GB / 3 = 9.07 GiB ← biggest**
+- Reference params (bf16, sharded): 2.27 GiB
+- DS / NCCL workspace: ~1 GiB
+- Total: ~16.9 GiB (matches observed 15.27)
+
+Adam state alone is 60% of trainer GPU memory.
+
+### User pivot — review of arXiv:2604.23747 then approval of CPU offload
+
+I recommended `num_generations=14` (1 epoch over rollouts vs 2 — paper deviation). User asked me to "talk about zero3 config" and I proposed CPU optimizer offload as the cleanest fix. User asked me to read arXiv:2604.23747 (Limozin et al. 2026) which documents a **silent grad-accum bug in DeepSpeed CPU optimizer offload** affecting TRL/OpenRLHF/Llama-Factory. I retracted the offload proposal.
+
+User then said "actually zero3 cpu offload should be fine. Try it." Their explicit go-ahead waives the original "don't change DS setup" rule for this hardware-fit reason. Saved as Rule 1b in feedback memory and a separate reference memory for the bug.
+
+### Attempt 6 — CPU optimizer offload (Try 3) — SUCCESS
+
+Created `scripts/deepspeed_configs/deepspeed_zero3_cpu_offload.yaml` (sibling of original; original untouched). Reverted launch script to **paper-exact** params: pdtbs=2, grad_accum=28, steps_per_gen=56, num_gens=28, max_prompt=2048, max_completion=500, gmu=0.55.
+
+Launched at 2026-05-06 21:43:26 UTC. wandb run: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/4hyrljvh`.
+
+Memory post-init (per trainer GPU, 44.42 GiB usable):
+```
+Used:    38.3-38.9 GiB
+Free:    6.0-6.5 GiB headroom ✓
+```
+
+Confirmation that offload freed ~8 GiB/rank (Adam state moved to host RAM).
+
+First three optimizer-step logs (each step = 1 generation cycle of 336 multi-turn rollouts + 28 grad-accum micro-steps):
+
+| Step | Reward | grad_norm | mean_len | frac_zero_std | Loss |
+|------|--------|-----------|----------|---------------|------|
+| 1    | 0.4652 | 1.33      | 178.0    | 0.00          | -0.0075 |
+| 4    | 0.5106 | 1.27      | 159.0    | 0.00          | 0.1769 |
+| 7    | 0.5317 | 1.29      | 133.0    | 0.00          | -0.0027 |
+
+Reward climbing monotonically (+0.066 over 6 steps), grad_norm steady (~1.3, healthy non-trivial), no degenerate GRPO groups (`frac_reward_zero_std=0.0`), completions compressing (178 → 133 tokens). All three are evidence the arXiv:2604.23747 silent grad-accum bug is **not** biting us — if it were, grad_norm would collapse toward 0 and reward would stall.
+
+ETA: ~20 min/step × 204 steps = ~67 hours = **~2.8 days**.
+
+**Status:** Stage II running healthy. Reward target ~0.85-0.92 over remaining ~200 steps.

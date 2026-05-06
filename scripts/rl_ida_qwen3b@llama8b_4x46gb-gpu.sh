@@ -7,15 +7,22 @@
 #              via vllm distributed_executor_backend="external_launcher")
 #
 # Hyperparameter rebalancing (preserves paper math):
-#   per_device_train_batch_size  : 4 -> 2     (user-specified, fallback to 1 on OOM)
+#   per_device_train_batch_size  : 4 -> 2     (lower fits 3 trainer ranks vs paper's 7)
 #   gradient_accumulation_steps  : 6 -> 28    (preserves global batch    = 2 * 3 * 28 = 168)
 #   steps_per_generation         : 12 -> 56   (preserves generation batch = 2 * 3 * 56 = 336)
 #   unique prompts per gen cycle : 12         (= 336 / num_generations 28, unchanged from paper)
 #
 # Unchanged from paper (per user instruction):
 #   num_generations=28, max_prompt_length=2048, max_completion_length=500,
-#   learning_rate=1e-5, gpu_memory_utilization=0.4 (tune only for OOM),
-#   score_reward_name=ida_reward, scripts/deepspeed_configs/deepspeed_zero3.yaml
+#   learning_rate=1e-5, score_reward_name=ida_reward
+#
+# DeepSpeed:
+#   Use deepspeed_zero3_cpu_offload.yaml (NOT the original deepspeed_zero3.yaml) —
+#   moves Adam state (~9 GiB/rank) to CPU so the trainer's transient logits-fwd peak
+#   (~3.74 GiB) fits alongside the co-located Llama-8B vLLM victim. Approved by the
+#   user on 2026-05-06 after analytical OOM accounting; original Rule "don't change
+#   DS setup" was waived for this hardware deviation. The arXiv:2604.23747 silent
+#   grad-accum bug is the known risk; integrity must be checked via reward curve.
 #
 # Substituted because the SEMA OpenAI gateway uses undated deployment names:
 #   score_reward_model_name : openai/gpt-4.1-mini-2025-04-14 -> openai/gpt-4.1-mini
@@ -62,7 +69,7 @@ fi
 
 # --- Launch trainer on GPUs 1,2,3 (3 ranks) ---
 CUDA_VISIBLE_DEVICES=1,2,3 accelerate launch --num_processes 3 \
-    --config_file scripts/deepspeed_configs/deepspeed_zero3.yaml \
+    --config_file scripts/deepspeed_configs/deepspeed_zero3_cpu_offload.yaml \
     sema/cli/train_cli.py rl_grpo \
     --seed 42 \
     --data_seed 42 \
@@ -90,7 +97,7 @@ CUDA_VISIBLE_DEVICES=1,2,3 accelerate launch --num_processes 3 \
     --test_size 0.2 \
     --max_turns 7 \
     --victim_model_name_or_path meta-llama/Llama-3.1-8B-Instruct \
-    --gpu_memory_utilization 0.4 \
+    --gpu_memory_utilization 0.55 \
     --score_reward_name ida_reward \
     --score_reward_model_name openai/gpt-4.1-mini \
     --reward_log_save_dir files/logs
