@@ -202,3 +202,63 @@ Reward climbing monotonically (+0.066 over 6 steps), grad_norm steady (~1.3, hea
 ETA: ~20 min/step × 204 steps = ~67 hours = **~2.8 days**.
 
 **Status:** Stage II running healthy. Reward target ~0.85-0.92 over remaining ~200 steps.
+
+---
+
+## 2026-05-08 — Stage II reached plateau, then judge gateway died from socket leak; run stopped
+
+### Trajectory summary
+
+The run climbed steadily for the first ~50 optimizer steps (epoch 0.01 → ~1.0), reward 0.465 → 0.75 peak, then settled into a plateau around **0.65–0.75** for the next ~250 steps. Best single-step reward observed: **0.7902 (epoch 1.83)**. Best rolling-mean over 40 reward-pipeline calls: **~0.69** (rank 0/1) and **~0.65** (rank 2 — consistently lower IDA-score numbers, possibly judge-call sampling artifact).
+
+Reward decomposition (all consistent over the plateau):
+- `format_reward` saturated at ~1.000 (occasionally 0.99)
+- `score_reward` (IDA) averaged ~0.31–0.39
+- `final` = 0.5 × format + 0.5 × score = 0.65–0.69
+
+**The 0.90+ post-normalization target was not reached.** On the pre-normalization scale this corresponds to ~1.30–1.50, vs the paper's claimed 1.85+. Some plausible reasons:
+
+1. Judge-model substitution: paper used `openai/gpt-4.1-mini-2025-04-14`; we used `openai/gpt-4.1-mini` (the dated deployment 404s on the SEMA gateway). Judge calibration differences directly change IDA numerical values.
+2. The IDA reward formula is `intent × (compliance + detail) / 2` with each in [0, 1]. The maximum is 1.0 only if all three are 1.0 simultaneously — extremely rare in practice for a 3B attacker against an 8B aligned victim.
+3. Format-reward saturation at step ~10 means all subsequent learning had to come from IDA score variance. With IDA only swinging in the 0.30–0.50 band, the optimizer had a narrow window to operate in.
+4. **`num_adv_turns` analysis** (rank 0/1/2 reward logs at step 47): mean 6.95, **96.4 % of generations use the full 7 turns**, vs paper's reported "~4 turns". Trains in **opposite direction** from paper claim. Likely a reward-shape interaction (longer plans give more compliance × detail product without a length penalty).
+
+### Observed grad-norm behaviour
+
+The trainer alternated between calm steps (grad_norm ~1.2–1.5) and spike steps (grad_norm 5–55). Worst spike was 56.55 at epoch 1.07, second worst 43.20 at epoch 1.66. Spikes correlated with longer mean_len (~225 vs 175 calm) — exploration into long-completion regions produces high-variance advantages. The optimizer absorbed these via PPO clipping; reward never diverged.
+
+### How the run died: socket leak in IDA judge
+
+Around epoch 2.81 (step ~290) the IDA judge began returning all zeros. By step 297 (epoch 2.96) gradient was 0.00 — policy had nothing to optimize against. Diagnosis:
+
+```
+TCP: inuse 28397 orphan 0 tw 0 alloc 28397
+ephemeral port range: 32768-60999  (28232 ports total)
+```
+
+The 3 trainer ranks held **9 700–9 800 socket FDs each** (28 800 total) — almost the entire ephemeral port range. The leak rate was ~1 200 sockets/hour ≈ 20/min, accumulating over 24+ hours. Curl from outside the trainer process hit `Cannot assign requested address` immediately. Litellm calls inside the trainer either reused existing connections (cached) or hit the kernel's port-exhaustion error.
+
+**Most likely cause:** litellm's disk cache + aiohttp + asyncio combination keeps stale TCP sockets alive past their useful lifetime. Each IDA judge call (one per (rank × prompt × generation) per gen cycle = ~336 calls) opens a new connection without explicit cleanup. Over 1 100+ generation cycles, 1 100 × 336 / 3 ranks ≈ 123 200 calls total would have been made, but only 28 400 socket FDs visible — suggesting many DID get released, just not fast enough vs. the rate of new connections under sustained load.
+
+### Stop and salvage
+
+- Sent SIGINT to all 3 trainer ranks. Trainer exited but **no checkpoint saved** — the script was launched with `--save_strategy no` (matching the published 8x80GB script). TRL's signal handler did not write `save_model` output. Result: `files/checkpoints/SEMA-Qwen2.5-3B-Instruct@Llama8B/` is empty.
+- Killed orphan vLLM-serve attacker on GPU 0; killed leftover compile_worker / spawn_main / resource_tracker processes.
+- All 4 GPUs idle. Port 8000 free. Egress to OpenAI gateway recovered (verified via curl: 200 OK in 1.2 s after a few minutes).
+- 28 137 orphan TCP sockets persisted in kernel; will clear over the next several minutes via FIN_WAIT2 / orphan-socket timeouts.
+
+### Take-aways for any future Stage II run on this hardware
+
+1. **Save checkpoints periodically.** Override the published `--save_strategy no` with `--save_strategy steps --save_steps 25` or similar. Will eat ~6 GB of disk per save (Qwen-3B ZeRO-3 16-bit save) so cap retention with `--save_total_limit`.
+2. **Rotate or close litellm/aiohttp connections.** Either patch `sema/utils.get_completions` to use a shared `aiohttp.ClientSession` with explicit close, or restart the run every ~20 hours to keep socket count below the ephemeral port range. (Per the user's "no code change" rule, restart is the safer option.)
+3. **The reward plateau is real on this recipe.** Whether it's the judge-model substitution or an inherent ceiling at 3B + Llama-8B + IDA reward, getting from ~0.69 to ~0.92 will likely need either a different judge (try the dated `2025-04-14` deployment if the gateway adds it) or a longer run with checkpointing so we can reload from the best-rolling-mean step rather than the latest.
+
+### Final result
+
+- Stage I: ✅ converged Qwen-3B SFT'd checkpoint at `files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct/`
+- Stage II: ⚠ ran 24+ hours, peaked at reward 0.79 / rolling mean 0.69, then hit infrastructure failure (socket leak → judge dead → policy collapse). No checkpoint saved.
+- W&B runs:
+  - Stage I SFT: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/vszan3lm`
+  - Stage II GRPO: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/4hyrljvh`
+
+**Status:** halted. Future runs need checkpointing + connection-leak mitigation.

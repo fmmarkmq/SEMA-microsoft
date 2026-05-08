@@ -6,38 +6,27 @@
 
 ## Where we are
 
-**Stage I — done** (committed `d3b3ac8`). 22 min wall-clock. Checkpoint at `files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct/`.
+**Stage I — done.** Checkpoint at `files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct/`.
 
-**Stage II — running** since 2026-05-06 21:43 UTC. wandb: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/4hyrljvh`.
+**Stage II — halted on 2026-05-08 ~20:30 UTC after 24+ hours of training.**
+- Plateaued at reward 0.65–0.75 (best 0.79 single-step, rolling mean ~0.69).
+- IDA judge gateway became unreachable due to socket leak (~28 800 leaked TCP sockets across 3 trainer ranks → ephemeral port exhaustion).
+- Policy collapsed to score=0 / grad=0 in the last ~7 steps.
+- Stopped via SIGINT. **No checkpoint saved** (`--save_strategy no` in the published recipe).
+- All 4 GPUs idle. wandb GRPO run: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/4hyrljvh`
 
-Active config:
-- `scripts/rl_ida_qwen3b@llama8b_4x46gb-gpu.sh` (paper-exact except num_processes=3)
-- `scripts/deepspeed_configs/deepspeed_zero3_cpu_offload.yaml` (CPU optimizer offload — approved by user 2026-05-06 after analytical OOM accounting)
-- Per-rank GPU usage: 38–39 GiB / 44.4 GiB (~6 GiB headroom)
+## Up next (pending user direction)
 
-Reward trajectory (first 3 logged optimizer steps):
-
-| step | reward | grad_norm | mean_len | frac_zero_std |
-|---|---|---|---|---|
-| 1 | 0.4652 | 1.33 | 178 | 0.00 |
-| 4 | 0.5106 | 1.27 | 159 | 0.00 |
-| 7 | 0.5317 | 1.29 | 133 | 0.00 |
-
-ETA: ~67 h / 2.8 days. Target reward ≥ 0.90 (post-normalization scale; equivalent to paper's pre-norm 1.80+).
-
-## Up next
-
-1. **Continue monitoring reward curve**. Re-arm Monitor every hour. Watch for:
-   - Reward climbing past 0.7 by step 50, past 0.85 by step 150
-   - grad_norm staying in ~1–2 range (collapse toward 0 → arXiv:2604.23747 bug; explosion → instability)
-   - mean_len compressing toward ~4 turns × ~50 tokens = ~200 tokens (paper-claimed)
-2. If anything regresses, snapshot logs and surface to user.
-3. After completion, evaluate the saved checkpoint (`files/checkpoints/SEMA-Qwen2.5-3B-Instruct@Llama8B/`) on AdvBench held-out test set per the paper's eval protocol.
+1. **Decide whether to retry Stage II.** Open levers:
+   - Add `--save_strategy steps --save_steps 25 --save_total_limit 3` to capture intermediate checkpoints.
+   - Restart every ~12-18 h to flush socket leak before exhaustion.
+   - Try the `openai/gpt-4.1-mini-2025-04-14` dated deployment in case the gateway has added it (paper-exact judge).
+2. **Or accept this result** — paper-faithful repro on 4×A6000 plateaus at ~0.69 rolling mean, ~0.79 peak. Document and move on.
 
 ## Open watchpoints
 
-- **arXiv:2604.23747 silent grad-accum bug** — early signal good (grad_norm=1.3, reward climbing) but the bug is silent so absence-of-error ≠ proof-of-correctness. The reward trajectory itself is the integrity check.
-- **Wall-clock**: 67 hours is a real commitment. Disconnects, OOM at later step (e.g., from longer completions as policy learns), gateway rate-limits could all interrupt.
+- 28 137 TCP sockets still in kernel `orphan` state at last check. Will time out over the next several minutes; should not block a new run if user wants to retry.
+- The 7-turn vs 4-turn divergence from paper claim is unresolved. Could be judge calibration, or could indicate the IDA reward shape doesn't pressure for compactness without the explicit length penalty noted in the paper text.
 
 ## Decision log
 
