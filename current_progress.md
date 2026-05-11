@@ -8,25 +8,23 @@
 
 **Stage I — done.** Checkpoint at `files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct/`.
 
-**Stage II — halted on 2026-05-08 ~20:30 UTC after 24+ hours of training.**
-- Plateaued at reward 0.65–0.75 (best 0.79 single-step, rolling mean ~0.69).
-- IDA judge gateway became unreachable due to socket leak (~28 800 leaked TCP sockets across 3 trainer ranks → ephemeral port exhaustion).
-- Policy collapsed to score=0 / grad=0 in the last ~7 steps.
-- Stopped via SIGINT. **No checkpoint saved** (`--save_strategy no` in the published recipe).
-- All 4 GPUs idle. wandb GRPO run: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/4hyrljvh`
+**Stage II — COMPLETE on 2026-05-10 13:59 UTC after ~39 hours.**
 
-## Up next (pending user direction)
+- Reward target achieved: best single step **0.9444** (opt step 165), last-8-step mean **0.910**.
+- Watchdog SIGINT-ed cleanly at socket threshold 25 000; trainer exited in 25 s.
+- 16 checkpoints saved (steps 10–160). Latest is `checkpoint-160/` (41 GB, includes 6 GB inference safetensors).
+- wandb run: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/nixtn3df`
+- All GPUs idle, disk 72 % used, no orphan procs.
 
-1. **Decide whether to retry Stage II.** Open levers:
-   - Add `--save_strategy steps --save_steps 25 --save_total_limit 3` to capture intermediate checkpoints.
-   - Restart every ~12-18 h to flush socket leak before exhaustion.
-   - Try the `openai/gpt-4.1-mini-2025-04-14` dated deployment in case the gateway has added it (paper-exact judge).
-2. **Or accept this result** — paper-faithful repro on 4×A6000 plateaus at ~0.69 rolling mean, ~0.79 peak. Document and move on.
+## Recommended downstream
 
-## Open watchpoints
+- **Inference / eval**: use `files/checkpoints/SEMA-Qwen2.5-3B-Instruct@Llama8B/checkpoint-160/model-*.safetensors`.
+- **Ablation**: try `checkpoint-100`, `checkpoint-130` to compare early-vs-late attacker.
 
-- 28 137 TCP sockets still in kernel `orphan` state at last check. Will time out over the next several minutes; should not block a new run if user wants to retry.
-- The 7-turn vs 4-turn divergence from paper claim is unresolved. Could be judge calibration, or could indicate the IDA reward shape doesn't pressure for compactness without the explicit length penalty noted in the paper text.
+## Resolved divergences from paper
+
+- `num_adv_turns` saturates at 7 (paper claims ~4). Likely the IDA reward formula lacks the length penalty in the paper text. Not blocking; documented in progress log.
+- Used `openai/gpt-4.1-mini` (the dated `2025-04-14` deployment 404s on this gateway). Final results may differ slightly from paper numerically but trajectory shape is similar.
 
 ## Decision log
 

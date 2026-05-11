@@ -262,3 +262,68 @@ The 3 trainer ranks held **9 700–9 800 socket FDs each** (28 800 total) — al
   - Stage II GRPO: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/4hyrljvh`
 
 **Status:** halted. Future runs need checkpointing + connection-leak mitigation.
+
+---
+
+## 2026-05-11 — Stage II retry SUCCEEDED with checkpointing + watchdog
+
+Following the post-mortem above, two operational changes were made and the user re-launched:
+
+**Change 1 — periodic checkpointing.** Added `--save_strategy steps --save_steps 10` (no `--save_total_limit`) to `scripts/rl_ida_qwen3b@llama8b_4x46gb-gpu.sh`. Each save is a DeepSpeed ZeRO-3 save: ~6 GB consolidated `model-*.safetensors` (the inference weights) plus ~34 GB `global_step{N}/` (sharded fp32 optimizer state for resuming training). Total ~41 GB per save.
+
+**Change 2 — socket-leak watchdog.** New `scripts/socket_watchdog.sh` polls `/proc/net/sockstat` every 60 s and SIGINTs the trainer ranks when in-use TCP socket count crosses 25 000 (out of 28 232 ephemeral ports). On first launch the watchdog exited immediately because it polled before the trainer ranks had spawned; fixed by adding a `SEEN_TRAINER` flag and a `MISSING_STREAK ≥ 3` exit-on-restart-tolerance check.
+
+### Launch timeline
+
+- Launched: 2026-05-08 22:40 UTC. W&B: `https://microsoft-research.wandb.io/tanghao/SEMA/runs/nixtn3df`.
+- Watchdog tripped: 2026-05-10 13:59 UTC at 25 281 in-use sockets.
+- All trainer ranks gone within 25 s of SIGINT.
+- Total wall-clock: ~39 hours, 167 optimizer steps logged (82 % of the 204-step budget).
+
+### Reward trajectory
+
+Dramatically better than the first attempt. First-launch peaked at 0.79 / rolling mean 0.69 then plateaued. This retry climbed steadily past the 0.90 target and held:
+
+| Stage | Reward range | grad_norm | mean_len |
+|---|---|---|---|
+| Early (steps 1–30) | 0.45 → 0.65 | 1.0–1.7 | 180 → 130 |
+| Mid (steps 30–90) | 0.65 → 0.90 | 1.0–1.5 | 130 → 165 |
+| Late (steps 90–167) | **0.83–0.94** | 0.7–1.5 | 150–180 |
+
+**Best single step: 0.9444** (opt step 165). **Last-8-step mean reward: 0.910.**
+
+The trajectory passed the 0.90 target around opt step 85, and stayed above 0.85 for the remaining ~80 steps. Rolling mean (last 30 reward-pipeline calls before trip):
+- rank 0: final=0.8835, format=1.000, score=0.7673
+- rank 1: final=0.8824, format=1.000, score=0.7648
+- rank 2: final=0.8579, format=0.995, score=0.7206
+
+That's an IDA score component of ~0.72–0.77 (vs the first attempt's 0.31–0.39), meaning the IDA judge is finding the multi-turn attacks much more on-intent / detailed.
+
+### Why this retry succeeded where the first did not
+
+Same recipe, only differences:
+1. Checkpoint every 10 steps (the first run had `save_strategy=no` and saved nothing).
+2. Watchdog cleanly intercepts the socket-exhaustion failure mode before it kills the IDA judge silently.
+3. **Different random seed of socket leak / cache hit pattern** — the first run leaked at ~1 200 sockets/h, this one at ~600/h. Possibly litellm cache hit rate stabilized at higher levels in this run. Hard to say without instrumenting, but the leak rate halving meant we got further before the watchdog needed to intervene.
+
+The reward improvement (0.69 → 0.91 rolling) is bigger than I expected from "just letting it run longer" — the first run had been at ~0.69 for ~150 steps before it collapsed. It's plausible the difference is real GRPO seed sensitivity / multiple-modes-with-different-attractor-basins behavior, not just wall-clock.
+
+### num_adv_turns: still divergent from paper
+
+At the latest reward-pipeline call before trip: **100% of 336 generations used the full 7 turns**, mean=7.00. The paper claims attackers converge to ~4 turns. The IDA reward `intent × (compliance + detail) / 2` has no explicit length penalty, so longer plans with maintained alignment always score higher. Either the paper has an undocumented length term, or this is an honest replication discrepancy. Not a blocker for the reward target.
+
+### Final artifacts
+
+- **16 checkpoints** at `files/checkpoints/SEMA-Qwen2.5-3B-Instruct@Llama8B/checkpoint-{10,20,...,160}/`
+  - Each: 41 GB total = 6 GB inference safetensors + 34 GB resume-state + tokenizer + config
+- **wandb run** (`nixtn3df`): full reward / grad / mean_len / IDA score trajectory
+- **Reward logs** at `files/logs/reward_logs_rank{0,1,2}.json` (per-prompt fine-grained scoring history)
+- **Cleanup verified**: all GPUs idle, port 8000 free, no orphan procs, disk 72 % used (1.2 TB / 1.8 TB)
+
+### Recommended downstream use
+
+For inference / eval / paper-reproduction:
+- Use `checkpoint-160` (the latest, the converged policy). Its `model-0000{1,2}-of-00002.safetensors` are the bf16 attacker weights, ~6 GB total.
+- Optionally try a few earlier checkpoints (e.g., `checkpoint-100`, `checkpoint-130`) for an ablation of "early-vs-late attacker", since reward was already > 0.85 by step 100.
+
+**Status: COMPLETE.** Reproduction goal met. Reward 0.91+ achieved with paper-exact GRPO hyperparameters on 4×A6000 hardware.

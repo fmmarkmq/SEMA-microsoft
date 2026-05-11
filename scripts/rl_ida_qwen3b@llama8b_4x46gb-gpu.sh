@@ -87,7 +87,8 @@ CUDA_VISIBLE_DEVICES=1,2,3 accelerate launch --num_processes 3 \
     --use_vllm \
     --vllm_mode server \
     --vllm_server_base_url http://localhost:8000 \
-    --save_strategy no \
+    --save_strategy steps \
+    --save_steps 10 \
     --logging_steps 1 \
     --log_completions \
     --report_to wandb \
