@@ -79,7 +79,7 @@ If you use SEMA in your research, please cite:
 ```bibtex
 @inproceedings{sema2026,
       title={SEMA: Simple yet Effective Learning for Multi-Turn Jailbreak Attacks}, 
-      author={Mingqian Feng, Xiaodong Liu, Weiwei Yang, Jialin Song, Xuekai Zhu, Chenliang Xu, Jianfeng Gao},
+      author={Mingqian Feng and Xiaodong Liu and Weiwei Yang and Jialin Song and Xuekai Zhu and Chenliang Xu and Jianfeng Gao},
       year={2026},
       booktitle={International Conference on Learning Representations (ICLR)},
       eprint={2602.06854},
