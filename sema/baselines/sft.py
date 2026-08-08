@@ -26,8 +26,8 @@ pip install --upgrade kernels
 Example:
 
 accelerate launch \
-    --config_file examples/accelerate_configs/deepspeed_zero3.yaml \
-    sft.py \
+    --config_file scripts/deepspeed_configs/deepspeed_zero3.yaml \
+    sema/baselines/sft.py \
     --torch_dtype bfloat16 \
     --model_name_or_path meta-llama/Llama-3.2-3B-Instruct \
     --run_name sft-derefusal-llama3-8b \
@@ -64,6 +64,12 @@ from trl import (
 @dataclass
 class ScriptArguments_(ScriptArguments):
     data_path: str = field(default=None)
+    min_ida_reward: float = field(
+        default=0.9,
+        metadata={
+            "help": "Keep only rollouts whose IDA reward (evaluation.reward, in [0, 1]) is at least this value."
+        },
+    )
 
 
 def main(script_args, training_args, model_args):
@@ -98,8 +104,9 @@ def main(script_args, training_args, model_args):
 
     dataset = dataset.train_test_split(test_size=0.1, seed=42)
 
-    # filter dataset
-    dataset = dataset.filter(lambda x: str(x['evaluation']['llm_scorer']['score_value']) == "100")
+    dataset = dataset.filter(
+        lambda x: float(x['evaluation']['reward']) >= script_args.min_ida_reward
+    )
 
     # Train model
     trainer = SFTTrainer(
