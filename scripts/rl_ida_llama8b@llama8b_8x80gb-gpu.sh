@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+else
+    echo "ERROR: .env not found at repo root"; exit 1
+fi
+
 SERVER_LOGFILE="rl_grpo_server_llama8b@llama8b_8gpu.log"
 CUDA_VISIBLE_DEVICES=7 trl vllm-serve --model files/checkpoints/prefilling_self-tuned-Llama-3.1-8B-Instruct > "$SERVER_LOGFILE" 2>&1 &
 VLLM_PID=$!
