@@ -25,7 +25,7 @@ docker run --gpus all --name sema -it \
 ### From source
 
 ```bash
-conda create -n sema python=3.11.13 -y
+conda create -n sema python=3.12.3 -y
 conda activate sema
 pip install -r requirements.txt
 # Please make sure the CUDA 12.6 toolkit is available
