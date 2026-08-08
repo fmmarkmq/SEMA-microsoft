@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Venue](https://img.shields.io/badge/ICLR-2026-green.svg)](https://arxiv.org/abs/2602.06854)
 
-SEMA is a framework for training open-loop, response-agnostic multi-turn jailbreak attackers via **Prefilling Self-Tuning** and **Reinforcement Learning with Intent-drift-aware Reward**. Unlike closed-loop methods, SEMA eliminates the need for real-time victim model feedback during attack generation.
+SEMA is a framework for training open-loop, response-agnostic multi-turn jailbreak attackers via **Prefilling Self-Tuning** and **Reinforcement Learning with Intent-drift-aware Reward**. Unlike closed-loop methods, SEMA eliminates the need for real-time victim-model feedback during attack generation.
 
 ## Installation
 
@@ -15,7 +15,11 @@ SEMA is a framework for training open-loop, response-agnostic multi-turn jailbre
 
 ```bash
 docker pull allenlao/sema:v0.1
-docker run --gpus all --name sema -it allenlao/sema:v0.1
+docker run --gpus all --name sema -it \
+  --ipc=host \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  allenlao/sema:v0.1
 ```
 
 ### From source
@@ -24,6 +28,20 @@ docker run --gpus all --name sema -it allenlao/sema:v0.1
 conda create -n sema python=3.11.13 -y
 conda activate sema
 pip install -r requirements.txt
+# Please make sure the CUDA 12.6 toolkit is available
+```
+Note that we developed against CUDA 12.6; higher versions of CUDA may not be compatible.
+
+## Set Up API Keys
+Create a `.env` file in the root directory of this repository and store your API keys there, along with any other environment variables you need. Our training uses GPT to provide part of the reward signal, so `OPENAI_API_KEY` is required. For example:
+```
+OPENAI_API_KEY=your-openai-key-here
+```
+
+Please also make sure you are logged in to Hugging Face and Weights & Biases:
+```
+huggingface-cli login
+wandb login
 ```
 
 ## Quick Start
@@ -67,7 +85,7 @@ If you use SEMA in your research, please cite:
       eprint={2602.06854},
       archivePrefix={arXiv},
       primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2602.06854}, 
+      url={https://arxiv.org/abs/2602.06854}
 }
 ```
 
