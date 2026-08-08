@@ -28,7 +28,7 @@ from sema.utils import setup_seed
 from sema.victims.victims import VLLMVictimWrapper
 from sema.rewards.format_reward import NumberedListFormatReward
 from sema.rewards.intent_drift_aware_reward import IntentDriftAwareReward
-from sema.rewards.ablations.no_intent_alignment_reward import NoIntendAlignmentReward
+from sema.rewards.ablations.no_intent_alignment_reward import NoIntentAlignmentReward
 from sema.rewards.ablations.no_refusal_reward import NoRefusalPhraseReward
 
 
@@ -287,7 +287,7 @@ class SimulationRewardPipeline:
                 template_root='sema/prompts',
             )
         elif score_reward_name == "no_intent_alignment_reward":
-            score_reward = NoIntendAlignmentReward(
+            score_reward = NoIntentAlignmentReward(
                 model_id=score_reward_model_name,
                 template_name='no_intent_alignment_reward_system',
                 template_root='sema/prompts',

@@ -15,11 +15,11 @@ from ...utils import get_completions
 LOGGER = logging.getLogger(__name__)
 
 
-class NoIntendAlignmentReward:
+class NoIntentAlignmentReward:
     def __init__(self,
                  *,
                  model_id: str = "gpt-4o", 
-                 template_name: str = "no_intend_alignment_reward_system",
+                 template_name: str = "no_intent_alignment_reward_system",
                  template_root: str | Path = Path(__file__).parent / "prompts",
                  max_tokens: int = 500,
                  return_dict: bool = True,
@@ -27,7 +27,8 @@ class NoIntendAlignmentReward:
         super().__init__()
         self.model_id = model_id
         self.template_name = template_name
-        self.template = Template(Path(template_root) / f"{template_name}.jinja")
+        self.template_path = Path(template_root) / f"{template_name}.jinja"
+        self.template = Template(self.template_path.read_text())
         self.max_tokens = max_tokens
         self.return_dict = return_dict
 
@@ -63,6 +64,10 @@ class NoIntendAlignmentReward:
             assert 'detail_level_score' in output_dict, "detail_level_score is required in output"
             assert 'rationale' in output_dict, "rationale is required in output"
             output_dict['output_text'] = response_text
+
+            output_dict['compliance_risk_score'] = float(output_dict['compliance_risk_score'])/10.0
+            output_dict['detail_level_score'] = float(output_dict['detail_level_score'])/10.0
+
             return output_dict
 
         except Exception as e:
@@ -71,10 +76,10 @@ class NoIntendAlignmentReward:
             LOGGER.error(e)
 
             output_dict = {
-                "compliance_risk_score": None,
-                "detail_level_score": None,
+                "compliance_risk_score": 0.0,
+                "detail_level_score": 0.0,
                 "rationale": None,
-                "output_text": None,
+                "output_text": 'Error processing input: ' + str(e),
             }
             return output_dict
 
@@ -87,8 +92,8 @@ class NoIntendAlignmentReward:
         **kwargs
         ) -> dict | bool:
 
-        assert request is not None, "request is required for no intend alignment reward"
-        assert response is not None, "response is required for no intend alignment reward"
+        assert request is not None, "request is required for no intent alignment reward"
+        assert response is not None, "response is required for no intent alignment reward"
         return_dict = self.return_dict if return_dict is None else return_dict
         score_dict = await self.score(
             request=request,
@@ -97,7 +102,7 @@ class NoIntendAlignmentReward:
             model_id=self.model_id,
             max_tokens=self.max_tokens,
         )
-        reward = 10*(score_dict['compliance_risk_score'] + (score_dict['detail_level_score']))/2
+        reward = (score_dict['compliance_risk_score'] + score_dict['detail_level_score'])/2
         if return_dict:
             reward_dict = {'reward': reward}
             reward_dict.update(score_dict)
@@ -115,8 +120,8 @@ class NoIntendAlignmentReward:
         return_dict: bool = None,
         **kwargs
         ) -> List[dict | bool]:
-        assert requests is not None, "requests is required for no intend alignment reward"
-        assert responses is not None, "responses is required for no intend alignment reward"
+        assert requests is not None, "requests is required for no intent alignment reward"
+        assert responses is not None, "responses is required for no intent alignment reward"
         return_dict = self.return_dict if return_dict is None else return_dict
         assert len(requests) == len(responses), "requests and responses must have the same length"
         tasks = []
@@ -136,9 +141,9 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv(".env")
     
-    no_ida_reward = NoIntendAlignmentReward(
+    no_ida_reward = NoIntentAlignmentReward(
         model_id='openai/gpt-4.1-mini-2025-04-14',
-        template_name='no_intend_alignment_reward_system',
+        template_name='no_intent_alignment_reward_system',
         template_root='sema/prompts',
         max_tokens=500,
         return_dict=True,
