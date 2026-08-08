@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+else
+    echo "ERROR: .env not found at repo root"; exit 1
+fi
+
 SERVER_LOGFILE="rl_grpo_server_qwen3b@llama3b_4gpu.log"
 CUDA_VISIBLE_DEVICES=3 trl vllm-serve --model Qwen/Qwen2.5-3B-Instruct > "$SERVER_LOGFILE" 2>&1 &
 VLLM_PID=$!

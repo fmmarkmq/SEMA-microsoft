@@ -30,12 +30,12 @@
 set -e
 
 # Source the OpenAI gateway secrets into the environment (used by the IDA reward).
-if [ -f .env_oai ]; then
+if [ -f .env ]; then
     set -a
-    . ./.env_oai
+    . ./.env
     set +a
 else
-    echo "ERROR: .env_oai not found at repo root"; exit 1
+    echo "ERROR: .env not found at repo root"; exit 1
 fi
 
 ATTACKER_CKPT="files/checkpoints/prefilling_self-tuned-Qwen2.5-3B-Instruct"

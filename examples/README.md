@@ -34,6 +34,7 @@ bash scripts/prefill_selftuning_qwen3b_4x48gb-gpu.sh
 | [`rl_ida_llama8b@llama8b_8x80gb-gpu.sh`](../scripts/rl_ida_llama8b@llama8b_8x80gb-gpu.sh) | Llama-3.1-8B-Instruct | Llama-3.1-8B-Instruct | 8×H100 |
 | [`rl_ida_qwen14b@llama8_8x80gb-gpu.sh`](../scripts/rl_ida_qwen14b@llama8_8x80gb-gpu.sh) | Qwen2.5-14B-Instruct | Llama-3.1-8B-Instruct | 8×H100 |
 | [`rl_ida_qwen3b@llama8b_8x80gb-gpu.sh`](../scripts/rl_ida_qwen3b@llama8b_8x80gb-gpu.sh) | Qwen2.5-3B-Instruct | Llama-3.1-8B-Instruct | 8×H100 |
+| [`rl_ida_qwen3b@llama8b_4x46gb-gpu.sh`](../scripts/rl_ida_qwen3b@llama8b_4x46gb-gpu.sh) | Qwen2.5-3B-Instruct | Llama-3.1-8B-Instruct | 4×A6000 |
 
 **Usage:**
 
@@ -47,6 +48,13 @@ bash scripts/rl_ida_qwen14b@llama8_8x80gb-gpu.sh
 # Qwen-3B attacker vs Llama-3.1-8B-Instruct victim
 bash scripts/rl_ida_qwen3b@llama8b_8x80gb-gpu.sh
 ```
+
+`rl_ida_qwen3b@llama8b_4x46gb-gpu.sh` is a smaller-hardware port of the 8×H100 script. It keeps
+the paper's effective batch sizes by rebalancing `per_device_train_batch_size`,
+`gradient_accumulation_steps`, and `steps_per_generation` across 3 trainer ranks instead of 7,
+and it uses `deepspeed_zero3_cpu_offload.yaml` so the optimizer state moves to CPU. Unlike the
+other scripts, it polls the vLLM server's `/health` endpoint instead of sleeping for a fixed 60s,
+and it tears the server down when training exits.
 
 **Outputs:**
 - Final attacker → `files/checkpoints/SEMA-<Attacker>@<Victim>/`
@@ -78,6 +86,27 @@ bash scripts/ablations/rl_no_prefilling_self-tuning_qwen3b@llama3b_4x80gb-gpu.sh
 # Ablation: simple refusal detection instead of IDA reward
 bash scripts/ablations/rl_no-refusal_as_reward_qwen3b@llama3b_4x80gb-gpu.sh
 ```
+
+## Utilities
+
+| Script | Description |
+|--------|-------------|
+| [`socket_watchdog.sh`](../scripts/socket_watchdog.sh) | Optional guard for long RL runs. Polls the in-use TCP socket count and sends `SIGINT` to the GRPO trainer ranks before ephemeral port exhaustion can starve the IDA judge calls, giving the trainer a chance to save first. |
+
+```bash
+# Run alongside an RL job; tail it via files/logs/socket_watchdog.log
+bash scripts/socket_watchdog.sh &
+```
+
+Thresholds are configurable via `SOCKET_WATCHDOG_THRESHOLD` (default 25000) and
+`SOCKET_WATCHDOG_POLL` (default 60 seconds).
+
+## DeepSpeed Configs
+
+| Config | Use |
+|--------|-----|
+| [`deepspeed_zero3.yaml`](../scripts/deepspeed_configs/deepspeed_zero3.yaml) | Default ZeRO-3 config used by all 80 GB scripts |
+| [`deepspeed_zero3_cpu_offload.yaml`](../scripts/deepspeed_configs/deepspeed_zero3_cpu_offload.yaml) | ZeRO-3 with optimizer state offloaded to CPU, for memory-constrained GPUs |
 
 ## Custom Configuration
 

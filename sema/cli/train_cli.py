@@ -5,9 +5,12 @@
 Unified CLI entry point for SEMA training pipeline.
 
 Usage:
-    python -m sema.cli.train rollout    [args]
-    python -m sema.cli.train self_tuning [args]
-    python -m sema.cli.train rl_grpo    [args]
+    python -m sema.cli.train_cli rollout     [args]
+    python -m sema.cli.train_cli self_tuning [args]
+    python -m sema.cli.train_cli rl_grpo     [args]
+
+Under `accelerate launch`, invoke this file by path instead:
+    accelerate launch [...] sema/cli/train_cli.py self_tuning [args]
 """
 
 import os

@@ -17,7 +17,7 @@ from vllm import LLM, SamplingParams
 
 from sema.victims.victims import VLLMVictimWrapper
 from sema.rewards.intent_drift_aware_reward import IntentDriftAwareReward
-from utils import setup_seed
+from sema.utils import setup_seed
 
 
 @ray.remote(num_gpus=1)
@@ -74,16 +74,21 @@ def execute_and_evaluate(victim_model_name_or_path, rollout_results):
     
     responses = asyncio.run(victim.execute_batch(adv_prompts))
     
-    llm_scorer_evaluator = IntentDriftAwareReward(
+    rewarder = IntentDriftAwareReward(
         model_id='openai/gpt-4.1-mini-2025-04-14',
         template_name='ida_reward_system',
         template_root='sema/prompts',
         max_tokens=300,
-        return_meta=True,
+        return_dict=True,
     )
 
+    last_responses = [
+        (response[-1] if response else "") if isinstance(response, list) else response
+        for response in responses
+    ]
+
     requests = [result['request'] for result in results]
-    llm_scorer_eval_outputs = asyncio.run(llm_scorer_evaluator.evaluate_batch(requests=requests, responses=responses))
+    llm_scorer_eval_outputs = asyncio.run(rewarder.reward_batch(requests=requests, responses=last_responses))
 
     for i in range(len(results)):
         results[i]['response'] = responses[i]
