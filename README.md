@@ -93,7 +93,7 @@ If you use SEMA in your research, please cite:
 
 For any questions regarding the package or paper, feel free to reach out to:
 
-- **Mingqian Feng** - mfeng7@ur.rochester.edu
+- **Mingqian Feng** - mingqian.feng@rochester.edu
 - **Weiwei Yang** - weiweiy@microsoft.com
 - **Carolyn Buractaon** - caburact@microsoft.com
 - **Xiaodong Liu** - xiaodl@microsoft.com
